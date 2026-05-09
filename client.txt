@@ -1,0 +1,190 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <ctype.h>
+
+void clear_screen() {
+    printf("\033[2J\033[H");
+    fflush(stdout);
+}
+
+ssize_t read_line(int fd, char *buf, size_t bufsize) {
+    size_t i = 0;
+    while (i < bufsize - 1) {
+        ssize_t n = read(fd, buf + i, 1);
+        if (n <= 0) return n;
+        if (buf[i] == '\n') {
+            buf[i + 1] = '\0';
+            return i + 1;
+        }
+        i++;
+    }
+    buf[i] = '\0';
+    return i;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <1|2>\n", argv[0]);
+        return 1;
+    }
+    
+    int p = atoi(argv[1]) - 1; // Convert to 0-based index
+    char in_f[12], out_f[12];
+    sprintf(in_f, "p%d_out", p + 1);
+    sprintf(out_f, "p%d_in", p + 1);
+    
+    int in = open(in_f, O_RDONLY);
+    int out = open(out_f, O_WRONLY);
+    
+    if (in < 0 || out < 0) {
+        fprintf(stderr, "Error opening FIFOs\n");
+        return 1;
+    }
+    
+    char line[1024];
+    ssize_t n;
+    
+    while (1) {
+        n = read_line(in, line, sizeof(line));
+        if (n <= 0) break;
+        
+        // Handle board display
+        if (strstr(line, "YOUR_BOARD") || strstr(line, "OPPONENT_BOARD")) {
+            clear_screen();
+            
+            if (strstr(line, "YOUR_BOARD")) {
+                printf("\033[1;33m=== YOUR BOARD ===\033[0m\n");
+            } else {
+                printf("\033[1;33m=== OPPONENT'S BOARD ===\033[0m\n");
+            }
+            
+            // Read and display column numbers
+            read_line(in, line, sizeof(line));
+            printf("%s", line);
+            
+            // Read and display the grid (10 rows)
+            for (int i = 0; i < 10; i++) {
+                read_line(in, line, sizeof(line));
+                printf("%s", line);
+            }
+            printf("\n");
+            continue;
+        }
+        
+        // Handle special messages
+        if (strstr(line, "WAITING_FOR_PLAYER2")) {
+            printf("\033[1;36mAll ships placed! Waiting for Player 2 to place their ships...\033[0m\n");
+            printf("\033[1;33mGame will start automatically when both players are ready.\033[0m\n");
+            continue;
+        }
+        
+        if (strstr(line, "GAME_START")) {
+            printf("\033[1;32mGame starting! Good luck!\033[0m\n");
+            continue;
+        }
+        
+        // Handle different types of messages
+        if (strstr(line, "PLACE_SHIP")) {
+            printf("%s", line);
+        again_place:
+            printf("\033[1;36m> \033[0m");
+            fflush(stdout);
+            
+            int x, y, d;
+            if (scanf("%d %d %d", &x, &y, &d) != 3) {
+                printf("\033[1;31mInvalid input! Enter: row col direction(0=H,1=V)\033[0m\n");
+                while (getchar() != '\n');
+                goto again_place;
+            }
+            
+            // Clear input buffer
+            while (getchar() != '\n');
+            
+            write(out, &x, sizeof(int));
+            write(out, &y, sizeof(int));
+            write(out, &d, sizeof(int));
+            
+        } else if (strstr(line, "ATTACK")) {
+            printf("%s", line);
+        again_attack:
+            printf("\033[1;36m> \033[0m");
+            fflush(stdout);
+            
+            int x, y;
+            if (scanf("%d %d", &x, &y) != 2) {
+                printf("\033[1;31mInvalid input! Enter: row col\033[0m\n");
+                while (getchar() != '\n');
+                goto again_attack;
+            }
+            
+            // Clear input buffer
+            while (getchar() != '\n');
+            
+            write(out, &x, sizeof(int));
+            write(out, &y, sizeof(int));
+            
+        } else if (strstr(line, "SCORES:")) {
+            printf("\033[1;36m%s\033[0m", line);
+            // Read the score lines
+            for (int i = 0; i < 4; i++) {
+                read_line(in, line, sizeof(line));
+                printf("%s", line);
+            }
+            
+        } else if (strstr(line, "ERROR")) {
+            printf("\033[1;31m%s\033[0m", line);
+            
+        } else if (strstr(line, "HIT!")) {
+            printf("\033[1;32m%s\033[0m", line);
+            
+        } else if (strstr(line, "BONUS HIT!")) {
+            printf("\033[1;35m%s\033[0m", line);
+            
+        } else if (strstr(line, "PENALTY HIT!")) {
+            printf("\033[1;31m%s\033[0m", line);
+            
+        } else if (strstr(line, "MISS!")) {
+            printf("\033[1;37m%s\033[0m", line);
+            
+        } else if (strstr(line, "You sank")) {
+            printf("\033[1;33m%s\033[0m", line);
+            
+        } else if (strstr(line, "You get another turn")) {
+            printf("\033[1;32m%s\033[0m", line);
+            
+        } else if (strstr(line, "Turn switches")) {
+            printf("\033[1;33m%s\033[0m", line);
+            
+        } else if (strstr(line, "VICTORY!")) {
+            clear_screen();
+            printf("%s", line);
+            // Read victory box
+            for (int i = 0; i < 3; i++) {
+                if (i < 2) read_line(in, line, sizeof(line));
+                printf("%s", line);
+            }
+            break;
+            
+        } else if (strstr(line, "DEFEAT!")) {
+            clear_screen();
+            printf("%s", line);
+            // Read defeat box
+            for (int i = 0; i < 3; i++) {
+                if (i < 2) read_line(in, line, sizeof(line));
+                printf("%s", line);
+            }
+            break;
+            
+        } else {
+            // Print other messages normally
+            printf("%s", line);
+        }
+    }
+    
+    close(in);
+    close(out);
+    return 0;
+}
